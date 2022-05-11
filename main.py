@@ -1,17 +1,19 @@
 import asyncio
+import aioschedule as schedule
 from aiogram.types import Message
 from aiogram.bot import Bot
 from aiogram.utils import executor
 from aiogram.utils.exceptions import MessageToDeleteNotFound
-from aiogram.utils.helper import Helper, ItemsList, Item
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher import Dispatcher
+from aiogram.dispatcher import Dispatcher,FSMContext
 from aiogram.types.callback_query import CallbackQuery
 import configparser
-import database
 from database import UserModel, close_db
 from keyboards import KeyBoards, CallBackDatas
 from info_parser import Parser
+from utils import SendFuncs
+
+
 
 # Подключение конфиг файла
 bot_cfg = configparser.ConfigParser()
@@ -25,7 +27,9 @@ asyncio.set_event_loop(main_loop)
 parser = Parser(loop=main_loop)
 bot = Bot(TOKEN, parse_mode='html', loop=main_loop)
 storage = MemoryStorage()
-dp = Dispatcher(bot, loop=main_loop, storage=storage)
+dp: Dispatcher = Dispatcher(bot, loop=main_loop, storage=storage)
+schedule.every().day.do(parser.get_htmls,message='Parsing started')
+main_loop.run_until_complete(parser.get_htmls())
 
 
 def get_usr(object) -> UserModel:
@@ -54,7 +58,7 @@ def render_leveler_keyboard(elements: dict, back, name=None):
                                    back_button=back)
 
 
-@dp.message_handler(commands=['start'])
+@dp.message_handler(commands=['start'],state='*')
 @dp.callback_query_handler(lambda query: query.data == 'start')
 async def welcome(message):
     usr = get_usr(message)
@@ -66,6 +70,14 @@ async def welcome(message):
             pass
     msg: Message = await bot.send_message(chat_id, 'Приветствуем!', reply_markup=KeyBoards.welcome_keyboard())
     save_last_message(usr, msg)
+
+
+@dp.message_handler(state='*')
+async def get_info(message: Message,state: FSMContext):
+    usr = get_usr(message)
+    func_name = (await state.get_data()).get('func_name')
+    func = SendFuncs.get_method_by_name(func_name)
+    await func(bot, message, usr,state)
 
 
 @dp.callback_query_handler(lambda query: query.data in ['-1', '0', '1'])
@@ -98,6 +110,9 @@ async def instruction(query: CallbackQuery):
                                                usr.that,
                                                menu.value.get('helper'),
                                                )
+        if helper['type'] == 'rasp':
+            keyboard = KeyBoards.get_keyboards(*[{'text':el['menu_text'],'callback_data':'rasp-'+el['send_func']}
+                for el in CallBackDatas.helpers.value['rasp']['elements']],back_button=usr.that)
 
     elif not menu.value.get('keyboard', False):
         keyboard = KeyBoards.get_keyboards(
@@ -122,10 +137,68 @@ async def instruction(query: CallbackQuery):
 
 
 #####################################################################
+@dp.callback_query_handler(lambda query: query.data.startswith('rasp'))
+async def rasp_menu(query: CallbackQuery,state: FSMContext):
+    usr = get_usr(query)
+    func_name = query.data.split('-')[1]
+    func = SendFuncs.get_method_by_name(func_name)
+    await func(bot,query,usr,state)
+
+
+#####################################################################
+@dp.callback_query_handler(lambda query: query.data.startswith('done_rasp'))
+async def done_rasp(query: CallbackQuery):
+    usr = get_usr(query)
+    rasp = await parser.rasp_parser(query.data.split('-')[2],
+                              query.data.split('-')[1],
+                              usr.get_by_name(query.data.split('-')[1]))
+    await bot.delete_message(query.message.chat.id,usr.last_message_id)
+    msg: Message = await bot.send_message(query.message.chat.id,
+                                          'Расписание:\n'+rasp,
+                                          reply_markup=KeyBoards.get_keyboards(
+                                              back_button='raspisanya'
+                                          ))
+    save_last_message(usr,msg)
+###########################################################
+
+
+@dp.callback_query_handler(lambda query: query.data.startswith('change'))
+async def change_rasp(query: CallbackQuery,state: FSMContext):
+    usr = get_usr(query)
+    value = query.data.split('_')[1]
+    if value == 'group':
+        usr.group = None
+    if value == 'audit':
+        usr.audit = None
+    if value == 'teach':
+        usr.teach = None
+    usr.save()
+    func_name = value+'_rasp'
+    func = SendFuncs.get_method_by_name(func_name)
+    await func(bot, query, usr, state)
+
+
 @dp.callback_query_handler(lambda query: len(query.data.split('*'))>2)
 async def sub_menus(query: CallbackQuery):
-    pass
-#Todo: Доделать распределение сабменюх
+    usr = get_usr(query)
+    helper_name = query.data.split('*')[0]
+    name = query.data.split('*')[1]
+    sub_name = query.data.split('*')[2]
+    section = CallBackDatas.helpers.value.get(helper_name)\
+        .get('elements')\
+        .get(name)\
+        .get('sub_menu')\
+        .get(sub_name)
+    await bot.delete_message(query.message.chat.id,usr.last_message_id)
+    msg: Message = await bot.send_message(query.message.chat.id,
+                                          section['inner_text'],
+                                          reply_markup=KeyBoards.get_keyboards(
+                                                about_button=section['url'],
+                                              back_button='*'.join(query.data.split('*')[:2])
+                                          ))
+    save_last_message(usr,msg)
+
+
 @dp.callback_query_handler(lambda query: query.data.split('*')[0] in CallBackDatas.helpers.value.keys())
 async def render_leveler_menu(query: CallbackQuery):
     usr = get_usr(query)
@@ -139,19 +212,20 @@ async def render_leveler_menu(query: CallbackQuery):
                                               reply_markup=KeyBoards.
                                               get_keyboards(
                                                   about_button=section['url'],
-                                                  back_button=usr.that
+                                                  back_button=query.data.split('*')[0]
                                               ))
     if type == 'l_keyboard':
         msg: Message = await bot.send_message(query.message.chat.id,
                                               section['inner_text'],
                                               reply_markup=render_leveler_keyboard(
                                                   section['sub_menu'],
-                                                  usr.that,
-                                                  url=True
+                                                  back=query.data.split('*')[0],
+                                                  name=query.data
                                               ))
-    usr.last_message_id = msg.message_id
-    usr.save()
-
+    save_last_message(usr,msg)
 
 if __name__ == "__main__":
     executor.Executor(dispatcher=dp, skip_updates=True, loop=main_loop).start_polling()
+    close_db()
+
+

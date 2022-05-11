@@ -18,6 +18,18 @@ class UserModel(BaseModel):
     people_class = SmallIntegerField(null=True)  # -1 - Поступающий, 0 - Студент, 1 - Преподователь
     queue = TextField(null=True)
     that = TextField(null=True)
+    group = TextField(null=True)
+    audit = TextField(null=True)
+    teach = TextField(null=True)
+
+    def get_by_name(self,value):
+        if value == 'group':
+            return self.group
+        if value == 'audit':
+            return self.audit
+        if value == 'teach':
+            return self.teach
+        raise ValueError('No such field')
 
     @classmethod
     def get_by_id(cls, value):
@@ -29,7 +41,7 @@ class UserModel(BaseModel):
         else:
             return cls.get(cls.user_id == value)
 
-
+UserModel.delete()
 UserModel.create_table()
 UserModel.validate_model()
 

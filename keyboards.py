@@ -74,7 +74,7 @@ class CallBackDatas(Enum):
                               'start_text': 'Рабочие материалы для ПАС'}
     raspisanya = {'people_class': 0,
                   'start_text': 'Расписание',
-                  'helpers': {'type': 'rasp'}}
+                  'helper': 'rasp'}
     oplata = {'people_class': 0,
               'start_text': 'Оплата за обучение',
               'url': 'https://rbmed03.ru/?page_id=18645',
@@ -105,16 +105,12 @@ class CallBackDatas(Enum):
     ########
     helpers = {'rasp': {'type': 'rasp', 'elements': [
         {'menu_text': 'Расписание звонков',
-         'name': 'rasp_zvonkov',
          'send_func': 'rasp_zvonkov'},
         {'menu_text': 'Расписание по группам',
-         'name': 'group_rasp',
          'send_func': 'group_rasp'},
         {'menu_text': 'Расписание по преподавателям',
-         'name': 'teach_rasp',
          'send_func': 'teach_rasp'},
         {'menu_text': 'Расписание по аудитории',
-         'name': 'audit_rasp',
          'send_func': 'audit_rasp'}]},
                'vipuskniku': {'type': 'leveler_keyboard', 'elements': {
                    'pervich': {'menu_text': 'Первичная аккредитация специалиста',
@@ -147,9 +143,7 @@ class CallBackDatas(Enum):
 
     @classmethod
     def get_by_name(cls, name: str):
-        for en in cls:
-            if en.name == name:
-                return en
+        return [en for en in cls if en.name == name][-1]
 
     @classmethod
     def get_people_class(cls, value: int):
